@@ -1,68 +1,116 @@
-from datetime import timedelta, datetime
+import json
+import secrets
+from datetime import datetime, timedelta, timezone
+from email.message import EmailMessage
 from typing import Optional
+
+import bcrypt
 import jwt
-from fastapi import HTTPException
-from starlette import status
-SECRET_KEY = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
+import aiosmtplib
+import redis.asyncio as redis
+from fastapi import HTTPException, status
+
+from apps.config import settings
+
+# ---------- Parol ----------
+def hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def create_token(data: dict, expires_delta: Optional[timedelta] = None):
+def verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode(), hashed.encode())
+
+
+# ---------- JWT ----------
+# Settings validates these at import time: a missing or too-short SECRET_KEY
+# stops the process rather than letting it run on something guessable.
+SECRET_KEY = settings.secret_key
+ALGORITHM = settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
+
+
+def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    if expires_delta:
-        expire = datetime.utcnow() + expires_delta
-    else:
-        expire = datetime.utcnow() + timedelta(minutes=15)
-
+    expire = datetime.now(timezone.utc) + (expires_delta or timedelta(minutes=15))
     to_encode.update({"exp": expire})
-    encoded_jwt = jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
-    return encoded_jwt
+    return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
-def create_access_and_refresh_tokens(user_id: str):
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+def create_access_and_refresh_tokens(user_id: str) -> tuple[str, str]:
     access_token = create_token(
         data={"sub": user_id, "type": "access"},
-        expires_delta=access_token_expires
+        expires_delta=timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
     )
-
-    refresh_token_expires = timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     refresh_token = create_token(
         data={"sub": user_id, "type": "refresh"},
-        expires_delta=refresh_token_expires
+        expires_delta=timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
     )
-
     return access_token, refresh_token
 
 
-def verify_token(token: str, token_type: str = "access"):
+def verify_token(token: str, token_type: str = "access") -> str:
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-        username: str = payload.get("sub")
-        token_type_from_token: str = payload.get("type")
-
-        if username is None:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid token"
-            )
-
-        if token_type_from_token != token_type:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Invalid token type. Expected {token_type}"
-            )
-
-        return username
     except jwt.ExpiredSignatureError:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token expired"
-        )
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Token expired")
     except jwt.InvalidTokenError:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    user_id = payload.get("sub")
+    if user_id is None:
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid token")
+
+    if payload.get("type") != token_type:
         raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token"
+            status.HTTP_401_UNAUTHORIZED,
+            f"Invalid token type. Expected {token_type}",
         )
+
+    return user_id
+
+
+# ---------- OTP (email) ----------
+redis_client = redis.from_url(str(settings.redis_url), decode_responses=True)
+
+OTP_TTL = settings.otp_ttl_seconds
+MAX_ATTEMPTS = settings.otp_max_attempts
+
+
+def generate_otp() -> str:
+    return f"{secrets.randbelow(1_000_000):06d}"
+
+
+async def save_pending_user(email: str, data: dict, code: str,
+                            attempts: int = 0, keep_ttl: bool = False):
+    payload = json.dumps({"data": data, "code": code, "attempts": attempts})
+    key = f"register:{email}"
+    if keep_ttl:
+        await redis_client.set(key, payload, keepttl=True)
+    else:
+        await redis_client.set(key, payload, ex=OTP_TTL)
+
+
+async def get_pending_user(email: str) -> dict | None:
+    raw = await redis_client.get(f"register:{email}")
+    return json.loads(raw) if raw else None
+
+
+async def send_otp_email(to_email: str, code: str):
+    msg = EmailMessage()
+    msg["From"] = settings.smtp_user
+    msg["To"] = to_email
+    msg["Subject"] = "Tasdiqlash kodi"
+    msg.set_content(f"Sizning kodingiz: {code}\nKod 5 daqiqa amal qiladi.")
+
+    if not settings.smtp_user or not settings.smtp_password:
+        raise RuntimeError("SMTP_USER / SMTP_PASSWORD are not configured")
+
+    await aiosmtplib.send(
+        msg,
+        hostname=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_user,
+        password=settings.smtp_password,
+        start_tls=True,
+    )

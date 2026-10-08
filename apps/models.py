@@ -28,8 +28,10 @@ class User(SQLModel, table=True):
     name: str
     age: int
     username: str = Field(unique=True, index=True)
+    email: str = Field(unique=True, index=True)
     password: str
 
-url = 'postgresql://postgres:1@localhost:5433/postgres'
-engine = create_engine(url)
+from apps.config import settings
+
+engine = create_engine(str(settings.database_url))
 SQLModel.metadata.create_all(engine)
