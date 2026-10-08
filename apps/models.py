@@ -28,6 +28,7 @@ class User(SQLModel, table=True):
     name: str
     age: int
     username: str = Field(unique=True, index=True)
+    email: str = Field(unique=True, index=True)
     password: str
 
 url = 'postgresql://postgres:1@localhost:5433/postgres'
