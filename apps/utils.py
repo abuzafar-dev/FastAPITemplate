@@ -1,4 +1,3 @@
-import os
 import json
 import secrets
 from datetime import datetime, timedelta, timezone
@@ -9,10 +8,9 @@ import bcrypt
 import jwt
 import aiosmtplib
 import redis.asyncio as redis
-from dotenv import load_dotenv
 from fastapi import HTTPException, status
 
-load_dotenv()
+from apps.config import settings
 
 # ---------- Parol ----------
 def hash_password(password: str) -> str:
@@ -24,13 +22,12 @@ def verify_password(password: str, hashed: str) -> bool:
 
 
 # ---------- JWT ----------
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES = 30
-REFRESH_TOKEN_EXPIRE_DAYS = 7
-
-if not SECRET_KEY:
-    raise RuntimeError("SECRET_KEY .env faylida topilmadi")
+# Settings validates these at import time: a missing or too-short SECRET_KEY
+# stops the process rather than letting it run on something guessable.
+SECRET_KEY = settings.secret_key
+ALGORITHM = settings.algorithm
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
+REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
 
 
 def create_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
@@ -74,13 +71,10 @@ def verify_token(token: str, token_type: str = "access") -> str:
 
 
 # ---------- OTP (email) ----------
-redis_client = redis.from_url(
-    os.getenv("REDIS_URL", "redis://localhost:6379/0"),
-    decode_responses=True,
-)
+redis_client = redis.from_url(str(settings.redis_url), decode_responses=True)
 
-OTP_TTL = 300        # 5 daqiqa
-MAX_ATTEMPTS = 5
+OTP_TTL = settings.otp_ttl_seconds
+MAX_ATTEMPTS = settings.otp_max_attempts
 
 
 def generate_otp() -> str:
@@ -104,16 +98,19 @@ async def get_pending_user(email: str) -> dict | None:
 
 async def send_otp_email(to_email: str, code: str):
     msg = EmailMessage()
-    msg["From"] = os.getenv("SMTP_USER")
+    msg["From"] = settings.smtp_user
     msg["To"] = to_email
     msg["Subject"] = "Tasdiqlash kodi"
     msg.set_content(f"Sizning kodingiz: {code}\nKod 5 daqiqa amal qiladi.")
 
+    if not settings.smtp_user or not settings.smtp_password:
+        raise RuntimeError("SMTP_USER / SMTP_PASSWORD are not configured")
+
     await aiosmtplib.send(
         msg,
-        hostname=os.getenv("SMTP_HOST", "smtp.gmail.com"),
-        port=int(os.getenv("SMTP_PORT", 587)),
-        username=os.getenv("SMTP_USER"),
-        password=os.getenv("SMTP_PASSWORD"),
+        hostname=settings.smtp_host,
+        port=settings.smtp_port,
+        username=settings.smtp_user,
+        password=settings.smtp_password,
         start_tls=True,
     )
