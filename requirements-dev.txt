@@ -1,0 +1,4 @@
+-r req.txt
+pytest
+httpx
+fakeredis

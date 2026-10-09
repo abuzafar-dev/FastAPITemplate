@@ -17,14 +17,26 @@ def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
 
 
-def verify_password(password: str, hashed: str) -> bool:
-    return bcrypt.checkpw(password.encode(), hashed.encode())
+def verify_password(password: str, hashed: str | None) -> bool:
+    """hashed None bo'lsa ham (foydalanuvchi yo'q) xuddi shuncha vaqt bcrypt
+    ishlaydi - javob vaqtidan username mavjudligini bilib bo'lmasin."""
+    raw = password.encode()
+    if len(raw) > 72:  # bcrypt 5 ValueError beradi; bunday parol baribir saqlanmaydi
+        raw = raw[:72]
+        hashed_ok = False
+    else:
+        hashed_ok = hashed is not None
+    matched = bcrypt.checkpw(raw, (hashed or _DUMMY_HASH).encode())
+    return matched and hashed_ok
+
+
+_DUMMY_HASH = bcrypt.hashpw(b"timing-equalizer", bcrypt.gensalt()).decode()
 
 
 # ---------- JWT ----------
 # Settings validates these at import time: a missing or too-short SECRET_KEY
 # stops the process rather than letting it run on something guessable.
-SECRET_KEY = settings.secret_key
+SECRET_KEY = settings.secret_key.get_secret_value()
 ALGORITHM = settings.algorithm
 ACCESS_TOKEN_EXPIRE_MINUTES = settings.access_token_expire_minutes
 REFRESH_TOKEN_EXPIRE_DAYS = settings.refresh_token_expire_days
@@ -81,14 +93,31 @@ def generate_otp() -> str:
     return f"{secrets.randbelow(1_000_000):06d}"
 
 
-async def save_pending_user(email: str, data: dict, code: str,
-                            attempts: int = 0, keep_ttl: bool = False):
-    payload = json.dumps({"data": data, "code": code, "attempts": attempts})
-    key = f"register:{email}"
-    if keep_ttl:
-        await redis_client.set(key, payload, keepttl=True)
-    else:
-        await redis_client.set(key, payload, ex=OTP_TTL)
+async def save_pending_user(email: str, data: dict, code: str):
+    payload = json.dumps({"data": data, "code": code})
+    await redis_client.set(f"register:{email}", payload, ex=OTP_TTL)
+
+
+async def register_verify_attempt(email: str) -> bool:
+    """Tasdiqlash urinishini hisoblaydi; limitdan oshsa False.
+
+    Hisob alohida kalitda: ro'yxatdan qayta o'tish yoki resend uni nolga
+    tushirmaydi. INCR atomar - parallel so'rovlar ham bitta hisobni oshiradi,
+    shuning uchun bir vaqtda yuborilgan ko'p taxmin ham MAX_ATTEMPTS dan oshmaydi.
+    """
+    key = f"otp_attempts:{email}"
+    await redis_client.set(key, 0, ex=settings.otp_lock_seconds, nx=True)
+    return await redis_client.incr(key) <= MAX_ATTEMPTS
+
+
+async def within_rate_limit(key: str, limit: int, window_seconds: int) -> bool:
+    """Oyna ichida limit oshmagan bo'lsa True. Atomar (SET NX EX + INCR)."""
+    await redis_client.set(key, 0, ex=window_seconds, nx=True)
+    return await redis_client.incr(key) <= limit
+
+
+async def clear_verify_attempts(email: str):
+    await redis_client.delete(f"otp_attempts:{email}")
 
 
 async def get_pending_user(email: str) -> dict | None:
@@ -111,6 +140,6 @@ async def send_otp_email(to_email: str, code: str):
         hostname=settings.smtp_host,
         port=settings.smtp_port,
         username=settings.smtp_user,
-        password=settings.smtp_password,
+        password=settings.smtp_password.get_secret_value(),
         start_tls=True,
     )

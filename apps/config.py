@@ -11,7 +11,7 @@ rather than coming up with a weak or shared value.
 
 from functools import lru_cache
 
-from pydantic import Field, PostgresDsn, RedisDsn
+from pydantic import Field, PostgresDsn, RedisDsn, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,13 +20,17 @@ class Settings(BaseSettings):
         env_file=".env",
         env_file_encoding="utf-8",
         extra="ignore",
+        # Sozlama xato bo'lsa ValidationError kiruvchi qiymatlarni (.env dagi
+        # kalitlar, SMTP paroli) logga yozib yubormasin.
+        hide_input_in_errors=True,
     )
 
     # --- required -----------------------------------------------------------
     # Generate with:  openssl rand -hex 32
     # min_length guards against a short placeholder being pasted in: a 10-char
     # key would still "work" while being trivially brute-forceable.
-    secret_key: str = Field(min_length=32)
+    # SecretStr: repr/log/traceback'da '**********' bo'lib ko'rinadi.
+    secret_key: SecretStr = Field(min_length=32)
     database_url: PostgresDsn
 
     # --- JWT ----------------------------------------------------------------
@@ -38,6 +42,12 @@ class Settings(BaseSettings):
     redis_url: RedisDsn = "redis://localhost:6379/0"
     otp_ttl_seconds: int = 300
     otp_max_attempts: int = 5
+    # Noto'g'ri urinishlar hisobi shu muddat saqlanadi. Qayta ro'yxatdan o'tish
+    # uni nolga tushirmaydi - aks holda kodni cheksiz taxmin qilish mumkin.
+    otp_lock_seconds: int = 3600
+    register_cooldown_seconds: int = 60
+    register_ip_limit: int = 10            # bitta IP dan ...
+    register_ip_window_seconds: int = 3600  # ... shuncha soniya ichida
 
     # --- SMTP: sends the OTP ------------------------------------------------
     # Optional so the app still starts without mail configured; sending then
@@ -45,7 +55,7 @@ class Settings(BaseSettings):
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 587
     smtp_user: str | None = None
-    smtp_password: str | None = None
+    smtp_password: SecretStr | None = None
 
 
 @lru_cache
