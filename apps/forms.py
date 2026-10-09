@@ -1,4 +1,8 @@
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
+
+# bcrypt faqat 72 BAYTni qabul qiladi (bcrypt 5 undan uzunida ValueError beradi).
+# Kirill harfi 2 bayt, shuning uchun belgilar soni emas, baytlar tekshiriladi.
+MAX_PASSWORD_BYTES = 72
 
 
 class ProfileResponse(BaseModel):
@@ -14,7 +18,14 @@ class RegisterForm(BaseModel):
     age: int
     username: str
     email: EmailStr
-    password: str = Field(min_length=8, max_length=72)
+    password: str = Field(min_length=8)
+
+    @field_validator("password")
+    @classmethod
+    def password_fits_bcrypt(cls, value: str) -> str:
+        if len(value.encode()) > MAX_PASSWORD_BYTES:
+            raise ValueError(f"Parol {MAX_PASSWORD_BYTES} baytdan oshmasligi kerak")
+        return value
 
 
 class VerifyForm(BaseModel):

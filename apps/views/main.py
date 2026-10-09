@@ -20,8 +20,9 @@ def get_session():
 SessionDep = Annotated[Session, Depends(get_session)]
 
 
+# Oddiy def: FastAPI uni threadpool'da ishlatadi, sinxron DB loop'ni to'smaydi.
 @app.get("/user/get/me", response_model=ProfileResponse)
-async def get_profile(session: SessionDep,
+def get_profile(session: SessionDep,
                       credentials: HTTPAuthorizationCredentials = Depends(security)):
     user_id = verify_token(credentials.credentials, token_type="access")
     user = session.get(User, int(user_id))
