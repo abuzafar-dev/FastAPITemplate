@@ -2,6 +2,13 @@
 
 FastAPI + SQLAlchemy 2.0 asosidagi oddiy CRUD API shablon. Misol: vazifalar (tasks).
 
+## Quick start
+
+```bash
+make run     # creates .venv and .env, installs deps, starts the app
+make test    # checks + tests
+```
+
 ## Ishga tushirish
 
 ```bash
