@@ -19,7 +19,8 @@ cp .env.example .env
 uvicorn app.main:app --reload
 ```
 
-Swagger: http://127.0.0.1:8000/docs
+Swagger: http://127.0.0.1:8000/docs  
+HTML sahifa (Jinja2): http://127.0.0.1:8000/pages/tasks
 
 ## Endpointlar
 
@@ -31,6 +32,14 @@ Swagger: http://127.0.0.1:8000/docs
 | PATCH | `/tasks/{id}` | o'zgartirish |
 | DELETE | `/tasks/{id}` | o'chirish |
 
+### HTML sahifalar (Jinja2 + forma)
+
+| Method | URL | Vazifasi |
+|---|---|---|
+| GET | `/pages/tasks` | vazifalar ro'yxati + qo'shish formasi |
+| POST | `/pages/tasks` | formadan yangi vazifa (`Form(...)`), keyin redirect |
+| POST | `/pages/tasks/{id}/toggle` | bajarildi / bajarilmadi |
+
 ## Tuzilishi
 
 ```
@@ -38,7 +47,10 @@ app/
   database.py     engine, session, get_db
   models.py       SQLAlchemy modellari
   schemas.py      Pydantic sxemalar
-  routers/tasks.py
+  routers/tasks.py   JSON API
+  routers/pages.py   HTML sahifalar (Jinja2Templates, Form)
+  templates/         base.html, tasks.html
+  static/            style.css
   main.py
 tests/
 ```

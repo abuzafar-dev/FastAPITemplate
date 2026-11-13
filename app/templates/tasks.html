@@ -1,0 +1,27 @@
+{% extends "base.html" %}
+
+{% block title %}Vazifalar{% endblock %}
+
+{% block content %}
+<h1>Vazifalar</h1>
+
+<form action="/pages/tasks" method="post" class="row">
+    <input type="text" name="title" placeholder="Yangi vazifa..." maxlength="200" required>
+    <button type="submit">Qo'shish</button>
+</form>
+
+<ul class="tasks">
+    {% for task in tasks %}
+    <li class="{{ 'done' if task.is_done }}">
+        <form action="/pages/tasks/{{ task.id }}/toggle" method="post">
+            <button type="submit" class="check" title="Holatini o'zgartirish">{{ '✔' if task.is_done else '○' }}</button>
+        </form>
+        <span>{{ task.title }}</span>
+    </li>
+    {% else %}
+    <li class="empty">Hozircha vazifa yo'q</li>
+    {% endfor %}
+</ul>
+
+<p class="muted">JSON API: <a href="/docs">/docs</a></p>
+{% endblock %}
